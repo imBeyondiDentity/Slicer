@@ -11,6 +11,10 @@ Fixes for iPhone Safari.
   now started once before slicing, each
   frame waits until it is really drawn,
   and a blank frame is retried.
+- Later frames no longer repeat the first
+  one: the app now waits for each new
+  picture to be painted and compares it
+  with the previous frame.
 - Thumbnails keep the video's own
   proportions, so portrait videos are
   no longer cropped to 16:9.
