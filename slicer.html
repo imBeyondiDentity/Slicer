@@ -78,6 +78,7 @@ h1{font-family:var(--serif);font-weight:900;font-size:clamp(36px,7vw,68px);line-
 .card{position:relative;flex:0 0 calc(50% - 5px);border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--bg)}
 .card.off{opacity:.38}
 .card img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#000;cursor:pointer}
+.probe{position:fixed;left:0;top:0;width:2px;height:2px;opacity:.01;pointer-events:none}
 .card .cap{display:flex;justify-content:space-between;align-items:center;padding:6px 8px;font-size:11px;color:var(--muted)}
 .card .cap a{color:var(--accent);text-decoration:none}
 .card .tick{position:absolute;top:6px;left:6px;width:20px;height:20px;accent-color:var(--accent);cursor:pointer}
@@ -333,6 +334,10 @@ function load(file) {
 
   const v = document.createElement("video");
   v.muted = true; v.playsInline = true; v.preload = "auto";
+  v.setAttribute("playsinline", ""); v.setAttribute("webkit-playsinline", "");
+  v.className = "probe";
+  document.querySelectorAll("video.probe").forEach(x => x.remove());
+  document.body.appendChild(v);
   S.url = URL.createObjectURL(file);
   v.src = S.url;
   v.onloadedmetadata = () => {
@@ -346,15 +351,43 @@ function load(file) {
 }
 
 /* ---------- Seeking and drawing ---------- */
-function seekTo(v, time) {
+function waitSeeked(v, ms) {
   return new Promise((resolve, reject) => {
-    if (v.readyState >= 2 && Math.abs(v.currentTime - time) < 0.01) { resolve(); return; }
     let timer;
     const finish = () => { clearTimeout(timer); v.removeEventListener("seeked", finish); resolve(); };
-    timer = setTimeout(() => { v.removeEventListener("seeked", finish); reject(new Error("seek")); }, 15000);
+    timer = setTimeout(() => { v.removeEventListener("seeked", finish); reject(new Error("seek")); }, ms);
     v.addEventListener("seeked", finish);
-    v.currentTime = time;
   });
+}
+function nextFrame(v, ms) {
+  return new Promise(resolve => {
+    let done = false;
+    const fin = () => { if (!done) { done = true; resolve(); } };
+    if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(fin);
+    setTimeout(fin, ms);
+  });
+}
+async function seekTo(v, time) {
+  if (Math.abs(v.currentTime - time) < 0.01 && v.readyState >= 2) { await nextFrame(v, 120); return; }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const wait = waitSeeked(v, 8000);
+    v.currentTime = attempt ? Math.min(time + 0.02, v.duration - 0.001) : time;
+    try { await wait; await nextFrame(v, 200); return; } catch (e) { if (attempt) throw e; }
+  }
+}
+// Mobile Safari only decodes a video after it has been played once.
+async function kickStart(v) {
+  try { await Promise.race([v.play(), new Promise(r => setTimeout(r, 3000))]); } catch (e) {}
+  v.pause();
+}
+const probeCanvas = document.createElement("canvas");
+probeCanvas.width = probeCanvas.height = 16;
+function looksBlank(canvas) {
+  const g = probeCanvas.getContext("2d", { willReadFrequently: true });
+  g.drawImage(canvas, 0, 0, 16, 16);
+  const d = g.getImageData(0, 0, 16, 16).data;
+  for (let i = 0; i < d.length; i += 4) if (d[i] > 12 || d[i + 1] > 12 || d[i + 2] > 12) return false;
+  return true;
 }
 const toBlob = (canvas, mime, q) => new Promise(r => canvas.toBlob(r, mime, q));
 function setProg(p) { $("#prog").style.width = (Math.max(0, Math.min(1, p)) * 100) + "%"; }
@@ -365,6 +398,7 @@ async function run() {
   S.running = true; S.cancel = false;
   $("#go").classList.add("hide"); $("#stop").classList.remove("hide");
   setProg(0);
+  await kickStart(S.video);
 
   const iv = currentInterval(), total = frameCount(), size = outSize();
   const canvas = document.createElement("canvas");
@@ -379,10 +413,15 @@ async function run() {
       const time = i * iv;
       await seekTo(S.video, time);
       ctx.drawImage(S.video, 0, 0, size.w, size.h);
+      for (let k = 0; k < 2 && looksBlank(canvas); k++) {
+        await new Promise(r => setTimeout(r, 250 + k * 350));
+        ctx.drawImage(S.video, 0, 0, size.w, size.h);
+      }
       const blob = await toBlob(canvas, mime, S.quality);
       if (!blob) continue;
       addFrame({
         time: time, blob: blob, checked: true, url: URL.createObjectURL(blob),
+        ratio: size.w + " / " + size.h,
         name: base + "_" + String(i + 1).padStart(4, "0") + "_" + stamp(time) + "." + S.format
       });
       setProg((i + 1) / total);
@@ -408,6 +447,7 @@ function addFrame(f) {
   tick.type = "checkbox"; tick.className = "tick"; tick.checked = true;
   const img = document.createElement("img");
   img.src = f.url; img.alt = f.name; img.loading = "lazy";
+  img.style.aspectRatio = f.ratio;
   const cap = document.createElement("div");
   cap.className = "cap";
   const time = document.createElement("span");

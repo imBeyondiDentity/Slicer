@@ -2,6 +2,19 @@
 
 Русская версия: [CHANGELOG_ru.md](CHANGELOG_ru.md)
 
+## 1.0.1 (2026-10-16)
+
+Fixes for iPhone Safari.
+
+- A black first frame and a stalled
+  seek no longer happen: the video is
+  now started once before slicing, each
+  frame waits until it is really drawn,
+  and a blank frame is retried.
+- Thumbnails keep the video's own
+  proportions, so portrait videos are
+  no longer cropped to 16:9.
+
 ## 1.0.0 (2026-10-16)
 
 First release.
